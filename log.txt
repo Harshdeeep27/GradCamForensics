@@ -1,0 +1,20 @@
+
+
+IID-Net, Total Params: 5781142
+
+IID-Net, Total Params: 5781142
+
+IID-Net, Total Params: 5781142
+
+IID-Net, Total Params: 5781142
+
+IID-Net, Total Params: 5781142
+
+IID-Net, Total Params: 5781142
+
+IID-Net, Total Params: 5781142
+
+IID-Net, Total Params: 5781142
+Train C:\Harsh\InpaintingForensics-master\train_filelist.npy with 73000
+Val C:\Harsh\InpaintingForensics-master\val_filelist.npy with 1000
+Test  with 12
