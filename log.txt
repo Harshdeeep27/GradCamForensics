@@ -52,3 +52,33 @@ IID-Net, Total Params: 5781142
 Train C:\Harsh\InpaintingForensics-master\train_filelist.npy with 73000
 Val C:\Harsh\InpaintingForensics-master\val_filelist.npy with 1000
 Test  with 12
+
+IID-Net, Total Params: 5781142
+Train C:\Harsh\InpaintingForensics-master\train_filelist.npy with 2800
+Val C:\Harsh\InpaintingForensics-master\val_filelist.npy with 200
+Test  with 12
+(2800/2800): Tra: A:50.09 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00
+(2800/2800): Tra: A:50.00 Val: A:50.00

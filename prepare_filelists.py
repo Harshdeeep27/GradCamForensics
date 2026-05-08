@@ -66,7 +66,15 @@ def main():
     if len(all_pairs) < 1000:
         raise ValueError('Combined dataset contains fewer than 1000 pairs. Check your dataset folder structure.')
 
-    val_size = min(1000, max(1, len(all_pairs) // 50))
+    #val_size = min(1000, max(1, len(all_pairs) // 50))
+    #train_pairs = all_pairs[val_size:]
+    #val_pairs = all_pairs[:val_size]
+
+    # Smaller subset for fast GPU debugging/training
+    all_pairs = all_pairs[:3000]
+
+    val_size = 200
+
     train_pairs = all_pairs[val_size:]
     val_pairs = all_pairs[:val_size]
 
