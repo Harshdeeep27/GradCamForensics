@@ -3,7 +3,6 @@ import cv2
 import random
 import argparse
 import numpy as np
-import tensorflow as tf
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -12,8 +11,14 @@ from torch.utils.data import DataLoader, Dataset
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import transforms
 from sklearn.metrics import accuracy_score, roc_auc_score
+import google.generativeai as genai
+import base64
+from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv()
+
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 operation_canditates = {
@@ -65,15 +70,15 @@ def constrained_weights(weights):
     # Normalize the weights for each filter.
     # Sum in the 3rd dimension, which contains 25 numbers.
     filter_1 = filter_1.reshape(1, 1, 1, 25)
-    filter_1 = filter_1 / filter_1.sum(3).reshape(1, 1, 1, 1)
+    filter_1 = filter_1 / (filter_1.sum(3).reshape(1,1,1,1) + 1e-8)
     filter_1[0, 0, 0, 12] = -1
 
     filter_2 = filter_2.reshape(1, 1, 1, 25)
-    filter_2 = filter_2 / filter_2.sum(3).reshape(1, 1, 1, 1)
+    filter_2 = filter_2 / (filter_2.sum(3).reshape(1,1,1,1) + 1e-8)
     filter_2[0, 0, 0, 12] = -1
 
     filter_3 = filter_3.reshape(1, 1, 1, 25)
-    filter_3 = filter_3 / filter_3.sum(3).reshape(1, 1, 1, 1)
+    filter_3 = filter_3 / (filter_3.sum(3).reshape(1,1,1,1) + 1e-8)
     filter_3[0, 0, 0, 12] = -1
 
     # Prints are for debug reasons.
@@ -447,6 +452,146 @@ class IID_Net(nn.Module):
         for idx, pf in enumerate(self.pf_list):
             self.pf_conv.weight.data[idx, :, :, :] = pf
 
+class GradCAM:
+    def __init__(self, model, target_layer):
+
+        self.model = model
+        self.target_layer = target_layer
+
+        self.gradients = None
+        self.activations = None
+
+        self.target_layer.register_forward_hook(
+            self.save_activation
+        )
+
+        self.target_layer.register_full_backward_hook(
+            self.save_gradient
+        )
+
+    def save_activation(self, module, input, output):
+        self.activations = output
+
+    def save_gradient(self, module, grad_input, grad_output):
+        self.gradients = grad_output[0]
+
+    def __call__(self, input_tensor):
+
+        self.model.zero_grad()
+
+        output = self.model(input_tensor)
+
+        output.backward(
+            torch.ones_like(output),
+            retain_graph=True
+        )
+
+        weights = torch.mean(
+            self.gradients,
+            dim=(2, 3),
+            keepdim=True
+        )
+
+        cam = torch.sum(
+            weights * self.activations,
+            dim=1,
+            keepdim=True
+        )
+
+        cam = F.relu(cam)
+
+        cam = cam - cam.min()
+
+        cam = cam / (cam.max() + 1e-8)
+
+        return cam
+    
+def save_gradcam_image(cam, original_img, output_path):
+
+    cam = cam.squeeze().cpu().detach().numpy()
+
+    cam = cv2.resize(
+        cam,
+        (
+            original_img.shape[1],
+            original_img.shape[0]
+        )
+    )
+
+    heatmap = cv2.applyColorMap(
+        np.uint8(255 * cam),
+        cv2.COLORMAP_JET
+    )
+
+    overlay = cv2.addWeighted(
+        original_img,
+        0.75,
+        heatmap,
+        0.25,
+        0
+    )
+
+    cv2.imwrite(output_path, overlay)
+
+
+def generate_forensic_report(
+        original_image_path,
+        mask_image_path,
+        gradcam_image_path):
+
+    with open(original_image_path, 'rb') as img_file:
+        original_b64 = base64.b64encode(
+            img_file.read()
+        ).decode('utf-8')
+
+    with open(mask_image_path, 'rb') as img_file:
+        mask_b64 = base64.b64encode(
+            img_file.read()
+        ).decode('utf-8')
+
+    with open(gradcam_image_path, 'rb') as img_file:
+        gradcam_b64 = base64.b64encode(
+            img_file.read()
+        ).decode('utf-8')
+
+    prompt = """
+    Analyze the following forensic outputs.
+
+    Image 1: Original image
+    Image 2: Binary tampering mask
+    Image 3: GradCAM heatmap
+
+    Generate a professional forensic report including:
+
+    1. Summary of findings
+    2. Tampered regions
+    3. Visual inconsistencies
+    4. Confidence level
+    5. Recommendations
+    """
+
+    model = genai.GenerativeModel(
+        'gemini-1.5-flash'
+    )
+
+    response = model.generate_content([
+        prompt,
+        {
+            "mime_type": "image/png",
+            "data": original_b64
+        },
+        {
+            "mime_type": "image/png",
+            "data": mask_b64
+        },
+        {
+            "mime_type": "image/png",
+            "data": gradcam_b64
+        }
+    ])
+
+    return response.text
+
 
 # Used only for training one-shot NAS
 class ChosenOperation_NAS(nn.Module):
@@ -573,10 +718,21 @@ class FocalLoss(nn.Module):
             alpha = torch.empty_like(logits).fill_(1 - self.alpha)
             alpha[label == 1] = self.alpha
 
-        probs = torch.sigmoid(logits)
+        probs = logits
+        probs = torch.clamp(
+            probs,
+            min=1e-6,
+            max=1 - 1e-6
+        )
+        probs = torch.nan_to_num(
+            probs,
+            nan=0.5,
+            posinf=1.0,
+            neginf=0.0
+        )
         pt = torch.where(label == 1, probs, 1 - probs)
         # BCEWithLogitsLoss expects raw logits and handles sigmoid+BCE internally
-        ce_loss = self.crit(logits, label)
+        ce_loss = self.crit(probs, label)
         loss = (alpha * torch.pow(1 - pt, self.gamma) * ce_loss)
         if self.reduction == 'mean':
             loss = loss.mean()
@@ -588,7 +744,7 @@ class FocalLoss(nn.Module):
 class IID_Model(nn.Module):
     def __init__(self):
         super(IID_Model, self).__init__()
-        self.lr = 1e-4
+        self.lr = 5e-5
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.networks = IID_Net()
         # self.networks = IID_Net_NAS()
@@ -604,8 +760,18 @@ class IID_Model(nn.Module):
         Mo = self(Ii)
         
         # Apply sigmoid to constrain output to [0,1] for loss computation
-        Mo_sigmoid = torch.sigmoid(Mo)
-        
+        Mo_sigmoid = Mo
+        Mo_sigmoid = torch.clamp(
+            Mo_sigmoid,
+            min=1e-6,
+            max=1 - 1e-6
+        )
+        Mo_sigmoid = torch.nan_to_num(
+            Mo_sigmoid,
+            nan=0.5,
+            posinf=1.0,
+            neginf=0.0
+        )
         gen_loss = FocalLoss()(Mo.view(Mo.size(0), -1), Mg.view(Mg.size(0), -1).float())
         gen_loss += nn.BCELoss()(Mo_sigmoid.view(Mo_sigmoid.size(0), -1), Mg.view(Mg.size(0), -1))
         return Mo_sigmoid, gen_loss
@@ -616,7 +782,14 @@ class IID_Model(nn.Module):
     def backward(self, gen_loss=None):
         if gen_loss:
             self.gen_optimizer.zero_grad()
+
             gen_loss.backward(retain_graph=False)
+
+            torch.nn.utils.clip_grad_norm_(
+                self.gen.parameters(),
+                max_norm=1.0
+            )
+
             self.gen_optimizer.step()
 
     def save(self, path=''):
@@ -625,7 +798,26 @@ class IID_Model(nn.Module):
         torch.save(self.gen.state_dict(), self.save_dir + path + 'IID_weights.pth')
 
     def load(self, path=''):
-        self.gen.load_state_dict(torch.load(self.save_dir + path + 'IID_weights.pth', map_location=self.device))
+
+        state_dict = torch.load(
+            self.save_dir + path + 'IID_weights.pth',
+            map_location=self.device
+        )
+
+        new_state_dict = {}
+
+        for k, v in state_dict.items():
+
+            if k.startswith('module.'):
+                new_key = k[7:]
+            else:
+                new_key = k
+
+            new_state_dict[new_key] = v
+
+        self.gen.load_state_dict(new_state_dict)
+
+        print("Weights loaded successfully.")
 
 
 class InpaintingForensics():
@@ -709,18 +901,103 @@ class InpaintingForensics():
         return np.mean(gen_losses), np.mean(auc)
 
     def test(self):
+
         self.giid_model.load()
+
         self.giid_model.eval()
-        with torch.no_grad():
+
+        gradcam = GradCAM(
+            self.giid_model.gen,
+            self.giid_model.gen.cell10
+        )
+
+        with torch.enable_grad():
+
             for cnt, items in enumerate(self.test_loader):
+
                 print(cnt, end='\r')
-                Ii, Mg = (item.to(self.device) for item in items[:-1])
+
+                Ii, Mg = (
+                    item.to(self.device)
+                    for item in items[:-1]
+                )
+
                 filename = items[-1][0]
-                # During testing, just get the model output without loss calculation
+
+                original_path = os.path.join(
+                    "demo_input",
+                    filename
+                )
+
+                # Forward pass
                 Mo = self.giid_model.gen(Ii)
-                Mo = torch.sigmoid(Mo)  # Apply sigmoid to get values in [0, 1]
-                Ii, Mo = self.convert1(Ii), self.convert2(Mo)[0]
-                cv2.imwrite('demo_output/output_' + filename, Mo * 255)
+
+                # Convert outputs
+                Mo_np = self.convert2(Mo)[0]
+                Mo_np = (Mo_np > 0.5).astype(np.uint8)
+
+                # Save mask
+                mask_path = (
+                    'demo_output/output_' + filename
+                )
+
+                cv2.imwrite(
+                    mask_path,
+                    Mo_np * 255
+                )
+
+                # -------------------
+                # GradCAM
+                # -------------------
+
+                cam = gradcam(Ii)
+
+                gradcam_path = (
+                    'demo_output/gradcam_' + filename
+                )
+
+                original_bgr = cv2.imread(original_path)
+
+                save_gradcam_image(
+                    cam,
+                    original_bgr,
+                    gradcam_path
+                )
+
+                # -------------------
+                # Gemini Report
+                # -------------------
+
+                try:
+
+                    report = generate_forensic_report(
+                        original_path,
+                        mask_path,
+                        gradcam_path
+                    )
+
+                    report_path = (
+                        'demo_output/report_' +
+                        filename +
+                        '.txt'
+                    )
+
+                    with open(
+                            report_path,
+                            'w',
+                            encoding='utf-8') as f:
+
+                        f.write(report)
+
+                    print(
+                        f"\nReport generated for {filename}"
+                    )
+
+                except Exception as e:
+
+                    print(
+                        f"\nGemini failed for {filename}: {e}"
+                    )
 
     def convert1(self, img):
         img = img * 127.5 + 127.5
