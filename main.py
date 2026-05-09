@@ -481,27 +481,26 @@ class GradCAM:
 
         output = self.model(input_tensor)
 
-        output.backward(
-            torch.ones_like(output),
-            retain_graph=True
-        )
+        target = output.sum()
+        target.backward(retain_graph=True)
 
-        weights = torch.mean(
-            self.gradients,
-            dim=(2, 3),
-            keepdim=True
-        )
+        grads = self.gradients
+        activations = self.activations
 
-        cam = torch.sum(
-            weights * self.activations,
-            dim=1,
-            keepdim=True
-        )
+        grads_power_2 = grads ** 2
+        grads_power_3 = grads_power_2 * grads
 
+        numerator = grads_power_2
+        denominator = 2 * grads_power_2 + activations * grads_power_3
+        alpha = numerator / (denominator + 1e-8)
+
+        positive_grads = F.relu(grads)
+        weights = torch.sum(alpha * positive_grads, dim=(2, 3), keepdim=True)
+
+        cam = torch.sum(weights * activations, dim=1, keepdim=True)
         cam = F.relu(cam)
 
         cam = cam - cam.min()
-
         cam = cam / (cam.max() + 1e-8)
 
         return cam
@@ -559,7 +558,7 @@ def generate_forensic_report(
 
     Image 1: Original image
     Image 2: Binary tampering mask
-    Image 3: GradCAM heatmap
+    Image 3: GradCAM++ heatmap
 
     Generate a professional forensic report including:
 
@@ -841,7 +840,7 @@ class InpaintingForensics():
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.giid_model = IID_Model().to(self.device)
-        self.n_epochs = 1000
+        self.n_epochs = 10
         self.train_loader = DataLoader(dataset=train_dataset, batch_size=self.batch_size, shuffle=True, num_workers=2)
         self.val_loader = DataLoader(dataset=val_dataset, batch_size=1, shuffle=False, num_workers=2)
         self.test_loader = DataLoader(dataset=test_dataset, batch_size=1, shuffle=False, num_workers=2)
@@ -947,7 +946,7 @@ class InpaintingForensics():
                 )
 
                 # -------------------
-                # GradCAM
+                # GradCAM++
                 # -------------------
 
                 cam = gradcam(Ii)

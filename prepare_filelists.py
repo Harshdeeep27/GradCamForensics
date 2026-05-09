@@ -71,9 +71,9 @@ def main():
     #val_pairs = all_pairs[:val_size]
 
     # Smaller subset for fast GPU debugging/training
-    all_pairs = all_pairs[:3000]
+    all_pairs = all_pairs[:10000]
 
-    val_size = 200
+    val_size = 500
 
     train_pairs = all_pairs[val_size:]
     val_pairs = all_pairs[:val_size]
